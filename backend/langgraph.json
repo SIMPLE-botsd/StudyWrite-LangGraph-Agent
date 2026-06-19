@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "student_writer": "./app/graph/registry.py:get_graph"
+  },
+  "env": ".env"
+}

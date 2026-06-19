@@ -1,0 +1,24 @@
+{
+  "seed": 20260604,
+  "data_source": "synthetic",
+  "n_samples": 400,
+  "n_classes": 40,
+  "train_samples": 280,
+  "test_samples": 120,
+  "image_size": "64x64",
+  "pca_components": 100,
+  "pca_explained_variance": 0.9689,
+  "reconstruction_mse": 0.00067,
+  "cnn_accuracy": 0.0583,
+  "last_train_loss": 3.3715,
+  "last_test_accuracy": 0.0583,
+  "qr_payload_bytes": 268,
+  "robustness": {
+    "normal": 1.0,
+    "0.5x size": 0.98,
+    "1% noise": 0.96,
+    "3% noise": 0.91,
+    "low light": 0.94,
+    "blur": 0.93
+  }
+}

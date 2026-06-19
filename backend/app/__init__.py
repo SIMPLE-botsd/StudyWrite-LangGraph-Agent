@@ -1,0 +1,1 @@
+"""StudyWrite backend application package."""
