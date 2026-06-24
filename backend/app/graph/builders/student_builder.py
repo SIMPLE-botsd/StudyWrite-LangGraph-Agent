@@ -3,7 +3,6 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 
 from app.graph.builders.base import BaseGraphBuilder
-from app.graph.edges.routing import route_after_evaluate
 from app.graph.nodes import (
     analyze_assignment_node,
     evaluate_draft_node,
@@ -18,6 +17,10 @@ from app.graph.nodes import (
 from app.graph.states import StudentWritingState
 
 
+def route_after_write(state: StudentWritingState) -> str:
+    return "evaluate_draft" if state.get("inputs", {}).get("deep_polish") else "render"
+
+
 class StudentWritingGraphBuilder(BaseGraphBuilder):
     def get_node_name_map(self) -> dict[str, str]:
         return {
@@ -25,9 +28,9 @@ class StudentWritingGraphBuilder(BaseGraphBuilder):
             "analyze_assignment": "理解作业要求",
             "retrieve_knowledge": "匹配写作知识",
             "plan_outline": "规划文章提纲",
-            "write_draft": "生成可编辑初稿",
+            "write_draft": "生成完整正文",
             "evaluate_draft": "质量评估",
-            "revise_draft": "自动修订",
+            "revise_draft": "深度修订",
             "render": "整理最终结果",
             "save_memory": "写入长期记忆",
         }
@@ -62,13 +65,17 @@ class StudentWritingGraphBuilder(BaseGraphBuilder):
         workflow.add_edge("analyze_assignment", "retrieve_knowledge")
         workflow.add_edge("retrieve_knowledge", "plan_outline")
         workflow.add_edge("plan_outline", "write_draft")
-        workflow.add_edge("write_draft", "evaluate_draft")
+        workflow.add_conditional_edges(
+            "write_draft",
+            route_after_write,
+            {"evaluate_draft": "evaluate_draft", "render": "render"},
+        )
         workflow.add_conditional_edges(
             "evaluate_draft",
-            route_after_evaluate,
+            lambda _state: "revise_draft",
             {"revise_draft": "revise_draft", "render": "render"},
         )
-        workflow.add_edge("revise_draft", "evaluate_draft")
+        workflow.add_edge("revise_draft", "render")
         workflow.add_edge("render", "save_memory")
         workflow.add_edge("save_memory", END)
 

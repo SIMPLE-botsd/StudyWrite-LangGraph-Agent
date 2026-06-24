@@ -6,3 +6,7 @@ langchain-core>=0.3.0
 langchain-openai>=0.2.0
 httpx>=0.27.0
 python-multipart>=0.0.9
+numpy>=1.20
+
+# 可选高性能本地向量检索引擎；未安装时会自动降级为 NumPy 精确相似度检索。
+# turbovec>=0.8.0

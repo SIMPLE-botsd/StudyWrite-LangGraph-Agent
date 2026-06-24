@@ -166,13 +166,23 @@ class ConversationRepository:
         *,
         query: str = "",
         include_deleted: bool = False,
+        deleted_only: bool = False,
     ) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self._list_sessions_sync, user_id, limit, query, include_deleted)
+        return await asyncio.to_thread(self._list_sessions_sync, user_id, limit, query, include_deleted, deleted_only)
 
-    def _list_sessions_sync(self, user_id: str, limit: int, query: str, include_deleted: bool) -> list[dict[str, Any]]:
+    def _list_sessions_sync(
+        self,
+        user_id: str,
+        limit: int,
+        query: str,
+        include_deleted: bool,
+        deleted_only: bool,
+    ) -> list[dict[str, Any]]:
         filters = ["s.user_id=?"]
         params: list[Any] = [user_id]
-        if not include_deleted:
+        if deleted_only:
+            filters.append("s.deleted_at IS NOT NULL")
+        elif not include_deleted:
             filters.append("s.deleted_at IS NULL")
         if query.strip():
             filters.append(

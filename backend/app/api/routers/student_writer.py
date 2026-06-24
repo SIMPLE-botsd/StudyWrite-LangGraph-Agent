@@ -10,7 +10,6 @@ from app.models.schemas import (
     ApiResponse,
     AssignmentSuggestion,
     AssignmentSuggestionRequest,
-    ImitateWritingRequest,
     PolishWritingRequest,
     StudentWritingRequest,
 )
@@ -40,28 +39,21 @@ async def polish_assignment(payload: PolishWritingRequest, request: Request):
     )
 
 
-@router.post("/imitate_writer")
-async def imitate_assignment(payload: ImitateWritingRequest, request: Request):
-    return await handle_workflow_request(
-        feature="imitate_assignment",
-        payload_dict=payload.dict(),
-        http_request=request,
-        workflow=student_writing_workflow,
-    )
-
-
 @router.post("/assignment_suggestion")
 async def assignment_suggestion(payload: AssignmentSuggestionRequest):
     try:
         prompt = (
-            "请为一个学生写作智能体生成一组表单参数，严格输出 JSON，不要 Markdown。"
+            "请为一个学生写作智能体生成一组全新的课程写作题材和表单参数，严格输出 JSON，不要 Markdown。"
             "JSON 字段必须包含：title, assignment_type, task_description, materials, style, "
-            "word_count, academic_level, rubric_focus, content, reference_text。\n\n"
+            "word_count, academic_level, rubric_focus, content。\n\n"
             f"当前模式：{payload.mode}\n"
-            f"当前题目：{payload.current_title or '请你自主拟定一个适合课程大作业展示的题目'}\n"
+            f"当前题目：{payload.current_title or '请你主动生成一个不同于默认样例的新题目'}\n"
             f"当前任务类型：{payload.assignment_type}\n\n"
-            "要求：题目适合大学课程作业；作业要求具体；评分关注点可用于指导生成；"
-            "如果模式是 polish，请 content 给一段可润色原文；如果模式是 imitate，请 reference_text 给一段可仿写范文。"
+            "要求：题目适合大学课程作业展示；不要总是使用“人工智能对大学学习方式的影响”；"
+            "题目要具体、有讨论空间；materials 给可直接作为写作依据的课堂材料或观察素材；"
+            "task_description 要像老师布置的作业要求；rubric_focus 要包含评分关注点；"
+            "word_count 给一个数字字符串。"
+            "如果模式是 polish，请 content 给一段有明显可润色问题的原文。"
         )
         raw = await invoke_text(
             "你是课程作业写作智能体的表单规划助手。必须只返回合法 JSON，不要解释，不要 Markdown 代码块。",
@@ -134,20 +126,6 @@ def _default_suggestion(payload: AssignmentSuggestionRequest) -> dict:
             "academic_level": "本科课程作业",
             "rubric_focus": "保留原意，逻辑更清楚，表达更正式，避免空泛套话。",
             "content": "人工智能现在很流行，很多同学都会用它写作业。它有好处也有坏处，所以我们要正确看待。",
-            "reference_text": "",
-        }
-    if payload.mode == "imitate":
-        return {
-            "title": payload.current_title or "深度学习习惯的培养",
-            "assignment_type": "仿写练习",
-            "task_description": "仿照参考文本的论述结构，围绕大学生深度学习习惯展开一篇短文。",
-            "materials": "",
-            "style": "结构清晰、表达自然、学生化",
-            "word_count": "1000",
-            "academic_level": "本科课程作业",
-            "rubric_focus": "只迁移结构和节奏，不复制原句；主题明确，有个人理解。",
-            "content": "",
-            "reference_text": "学习并不是简单地接收结论，而是在不断提问、验证和修正中形成自己的理解。真正有效的学习，需要把外部信息转化为个人能够解释、使用和反思的知识。",
         }
     defaults = {
         "title": payload.current_title or "人工智能对大学学习方式的影响",
@@ -159,6 +137,5 @@ def _default_suggestion(payload: AssignmentSuggestionRequest) -> dict:
         "academic_level": "本科课程作业",
         "rubric_focus": "观点明确，论证有材料支撑，体现个人反思，避免直接照搬 AI 输出。",
         "content": "人工智能现在很流行，很多同学都会用它写作业。它有好处也有坏处，所以我们要正确看待。",
-        "reference_text": "学习并不是简单地接收结论，而是在不断提问、验证和修正中形成自己的理解。",
     }
     return defaults

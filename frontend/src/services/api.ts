@@ -65,6 +65,11 @@ export interface ModelConfig {
   has_api_key: boolean;
   allow_local_fallback: boolean;
   runtime: string;
+  used_llm?: boolean;
+  used_fallback?: boolean;
+  last_error?: string;
+  last_model?: string;
+  last_provider?: string;
 }
 
 export interface AssignmentSuggestion {
@@ -77,7 +82,6 @@ export interface AssignmentSuggestion {
   academic_level: string;
   rubric_focus: string;
   content: string;
-  reference_text: string;
 }
 
 export interface RagflowStatus {
@@ -85,6 +89,10 @@ export interface RagflowStatus {
   has_api_key: boolean;
   default_dataset_count: number;
   default_top_k: number;
+  backend?: string;
+  engine?: string;
+  turbovec_available?: boolean;
+  knowledge_backend?: string;
 }
 
 export interface RagflowDataset {
@@ -154,37 +162,36 @@ export async function fetchConversationSessions(payload: {
   userId: string;
   query?: string;
   includeDeleted?: boolean;
+  deletedOnly?: boolean;
   limit?: number;
 }): Promise<ConversationSession[]> {
   const params = new URLSearchParams({
-    user_id: payload.userId,
     query: payload.query || '',
     include_deleted: String(Boolean(payload.includeDeleted)),
+    deleted_only: String(Boolean(payload.deletedOnly)),
     limit: String(payload.limit || 30),
   });
-  const response = await fetch(`${API_PREFIX}/memory/sessions?${params.toString()}`);
+  const response = await fetch(`${API_PREFIX}/users/${encodeURIComponent(payload.userId)}/sessions?${params.toString()}`);
   const json = await readJsonOrThrow(response, '会话列表读取失败');
   return json.data || [];
 }
 
 export async function fetchConversationSession(userId: string, sessionId: string): Promise<SessionDetail> {
-  const params = new URLSearchParams({ user_id: userId, include_deleted: 'true' });
-  const response = await fetch(`${API_PREFIX}/memory/sessions/${encodeURIComponent(sessionId)}?${params.toString()}`);
+  const params = new URLSearchParams({ include_deleted: 'true' });
+  const response = await fetch(`${API_PREFIX}/users/${encodeURIComponent(userId)}/sessions/${encodeURIComponent(sessionId)}?${params.toString()}`);
   const json = await readJsonOrThrow(response, '会话详情读取失败');
   return json.data;
 }
 
 export async function softDeleteConversationSession(userId: string, sessionId: string) {
-  const params = new URLSearchParams({ user_id: userId });
-  const response = await fetch(`${API_PREFIX}/memory/sessions/${encodeURIComponent(sessionId)}?${params.toString()}`, {
+  const response = await fetch(`${API_PREFIX}/users/${encodeURIComponent(userId)}/sessions/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',
   });
   return readJsonOrThrow(response, '会话删除失败');
 }
 
 export async function restoreConversationSession(userId: string, sessionId: string) {
-  const params = new URLSearchParams({ user_id: userId });
-  const response = await fetch(`${API_PREFIX}/memory/sessions/${encodeURIComponent(sessionId)}/restore?${params.toString()}`, {
+  const response = await fetch(`${API_PREFIX}/users/${encodeURIComponent(userId)}/sessions/${encodeURIComponent(sessionId)}/restore`, {
     method: 'POST',
   });
   return readJsonOrThrow(response, '会话恢复失败');
@@ -291,7 +298,10 @@ export async function initializeRagflowWritingDatasets() {
   return json.data;
 }
 
-export async function uploadRagflowDocument(datasetId: string, file: File) {
+export async function uploadRagflowDocument(datasetId: string, file: File): Promise<{
+  documents?: Array<{ id: string; dataset_id?: string; name: string; status?: string; chunk_count?: number }>;
+  parse?: Record<string, unknown>;
+}> {
   const form = new FormData();
   form.append('dataset_id', datasetId);
   form.append('file', file);

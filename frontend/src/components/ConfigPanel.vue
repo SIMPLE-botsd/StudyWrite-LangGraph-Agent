@@ -36,7 +36,6 @@
           <option>社会实践</option>
           <option>演讲稿</option>
           <option>润色修改</option>
-          <option>仿写练习</option>
         </select>
       </label>
 
@@ -65,11 +64,6 @@
         <textarea v-model="draft.content" rows="7" />
       </label>
 
-      <label v-if="mode === 'imitate'" class="wide">
-        <span>参考范文</span>
-        <textarea v-model="draft.reference_text" rows="7" />
-      </label>
-
       <label v-if="mode === 'draft'" class="wide">
         <span>材料 / 课堂笔记</span>
         <textarea v-model="draft.materials" rows="7" />
@@ -93,6 +87,10 @@
       <label class="check-row">
         <input v-model="draft.use_llm" type="checkbox" />
         <span>使用百炼云模型</span>
+      </label>
+      <label class="check-row">
+        <input v-model="draft.deep_polish" type="checkbox" />
+        <span>启用深度打磨</span>
       </label>
     </div>
 
@@ -130,7 +128,6 @@ const draft = computed({
 
 const promptLabel = computed(() => {
   if (props.mode === 'polish') return '润色要求';
-  if (props.mode === 'imitate') return '新文章要求';
   return '作业要求';
 });
 </script>

@@ -2,10 +2,10 @@
   <section class="panel result-panel">
     <div class="panel-head result-head">
       <div>
-        <p class="eyebrow">Output</p>
+        <p class="eyebrow">正文</p>
         <h2>写作结果</h2>
       </div>
-      <button class="icon-button" type="button" title="复制结果" @click="copy">
+      <button class="icon-button" type="button" title="复制正文" @click="copy">
         <Copy :size="17" />
       </button>
     </div>
@@ -13,7 +13,7 @@
     <textarea
       class="result-editor"
       :value="modelValue"
-      placeholder="运行工作流后，这里会显示最终文章和质量自检。"
+      placeholder="运行工作流后，这里会显示最终正文。"
       @input="$emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
     />
   </section>

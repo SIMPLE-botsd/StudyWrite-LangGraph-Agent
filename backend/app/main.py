@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting StudyWrite LangGraph Agent")
+    logger.info("Starting DeepPen LangGraph Agent")
     await init_database()
     yield
-    logger.info("Stopping StudyWrite LangGraph Agent")
+    logger.info("Stopping DeepPen LangGraph Agent")
 
 
 def create_app() -> FastAPI:

@@ -3,60 +3,61 @@ from __future__ import annotations
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.models.schemas import ApiResponse, RagflowCreateDatasetRequest, RagflowRetrieveRequest
-from app.services.ragflow_service import RagflowFile, RagflowNotConfigured, ragflow_service
+from app.services.knowledge_service import KnowledgeFile, knowledge_service
+from app.services.ragflow_service import RagflowNotConfigured
 
-router = APIRouter(prefix="/ragflow", tags=["RAGFlow Knowledge"])
+router = APIRouter(prefix="/ragflow", tags=["Knowledge Retrieval"])
 
 
 @router.get("/status")
 async def ragflow_status():
-    return ApiResponse(message="ragflow status", data=ragflow_service.status())
+    return ApiResponse(message="knowledge status", data=knowledge_service.status())
 
 
 @router.get("/datasets")
 async def ragflow_datasets():
-    return ApiResponse(message="ragflow datasets", data=await _safe_call(ragflow_service.list_datasets))
+    return ApiResponse(message="knowledge datasets", data=await _safe_call(knowledge_service.list_datasets))
 
 
 @router.post("/datasets")
 async def ragflow_create_dataset(payload: RagflowCreateDatasetRequest):
-    data = await _safe_call(ragflow_service.create_dataset, payload.name, payload.description)
-    return ApiResponse(message="ragflow dataset created", data=data)
+    data = await _safe_call(knowledge_service.create_dataset, payload.name, payload.description)
+    return ApiResponse(message="knowledge dataset created", data=data)
 
 
 @router.post("/documents")
 async def ragflow_upload_document(
-    dataset_id: str = Form(...),
+    dataset_id: str = Form(""),
     file: UploadFile = File(...),
 ):
     content = await file.read()
     data = await _safe_call(
-        ragflow_service.upload_document,
+        knowledge_service.upload_document,
         dataset_id,
-        RagflowFile(
+        KnowledgeFile(
             filename=file.filename or "upload.txt",
             content=content,
             content_type=file.content_type or "application/octet-stream",
         ),
     )
-    return ApiResponse(message="ragflow document uploaded", data=data)
+    return ApiResponse(message="knowledge document uploaded", data=data)
 
 
 @router.post("/retrieve")
 async def ragflow_retrieve(payload: RagflowRetrieveRequest):
     data = await _safe_call(
-        ragflow_service.retrieve,
+        knowledge_service.retrieve,
         payload.question,
         payload.dataset_ids,
         top_k=payload.top_k,
     )
-    return ApiResponse(message="ragflow retrieval", data=data)
+    return ApiResponse(message="knowledge retrieval", data=data)
 
 
 @router.post("/initialize-writing")
 async def ragflow_initialize_writing():
-    data = await _safe_call(ragflow_service.initialize_writing_datasets)
-    return ApiResponse(message="ragflow writing datasets initialized", data=data)
+    data = await _safe_call(knowledge_service.initialize_writing_datasets)
+    return ApiResponse(message="knowledge writing datasets initialized", data=data)
 
 
 async def _safe_call(func, *args, **kwargs):

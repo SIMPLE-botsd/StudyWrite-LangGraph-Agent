@@ -1,1 +1,1 @@
-"""StudyWrite backend application package."""
+"""DeepPen backend application package."""

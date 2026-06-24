@@ -26,7 +26,7 @@ load_env_file()
 class Settings:
     """Runtime settings kept intentionally simple for a student project demo."""
 
-    PROJECT_NAME = "StudyWrite LangGraph Agent"
+    PROJECT_NAME = "DeepPen LangGraph Agent"
     DESCRIPTION = "面向学生课程大作业的 LangGraph 写作智能体，内置短期记忆和长期记忆。"
     VERSION = "0.1.0"
     PREFIX_API = "/writeapi/v1"
@@ -44,7 +44,7 @@ class Settings:
     )
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
-    MODEL_NAME = os.getenv("MODEL_NAME", "qwen3.6-35b-a3b")
+    MODEL_NAME = os.getenv("MODEL_NAME", "qwen3.6-flash-2026-04-16")
     MODEL_TEMPERATURE = float(os.getenv("MODEL_TEMPERATURE", "0.25"))
     MODEL_TIMEOUT_SECONDS = float(os.getenv("MODEL_TIMEOUT_SECONDS", "90"))
     ALLOW_LOCAL_FALLBACK = os.getenv("ALLOW_LOCAL_FALLBACK", "true").lower() in {"1", "true", "yes", "on"}
@@ -76,6 +76,8 @@ class Settings:
     MEMORY_MAX_TURNS = int(os.getenv("MEMORY_MAX_TURNS", "4"))
     MEMORY_TOP_K = int(os.getenv("MEMORY_TOP_K", "5"))
 
+    KNOWLEDGE_BACKEND = os.getenv("KNOWLEDGE_BACKEND", "local_turbovec")
+
     RAGFLOW_BASE_URL = os.getenv("RAGFLOW_BASE_URL", "https://cloud.ragflow.io").rstrip("/")
     RAGFLOW_API_KEY = os.getenv("RAGFLOW_API_KEY", "")
     RAGFLOW_TIMEOUT_SECONDS = float(os.getenv("RAGFLOW_TIMEOUT_SECONDS", "60"))
@@ -94,6 +96,25 @@ class Settings:
             "default_dataset_count": len(self.RAGFLOW_DEFAULT_DATASET_IDS),
             "default_top_k": self.RAGFLOW_DEFAULT_TOP_K,
         }
+
+    @staticmethod
+    def _path_env(name: str, default: Path) -> Path:
+        value = os.getenv(name, "").strip()
+        return Path(value) if value else default
+
+    TURBOVEC_DB_PATH = _path_env.__func__("TURBOVEC_DB_PATH", DATA_DIR / "turbovec_knowledge.sqlite3")
+    TURBOVEC_INDEX_PATH = _path_env.__func__("TURBOVEC_INDEX_PATH", DATA_DIR / "turbovec_index.tvim")
+    TURBOVEC_SOURCE_PATH = os.getenv("TURBOVEC_SOURCE_PATH", "")
+    TURBOVEC_DIM = int(os.getenv("TURBOVEC_DIM", "512"))
+    TURBOVEC_BIT_WIDTH = int(os.getenv("TURBOVEC_BIT_WIDTH", "4"))
+    TURBOVEC_CHUNK_SIZE = int(os.getenv("TURBOVEC_CHUNK_SIZE", "900"))
+    TURBOVEC_CHUNK_OVERLAP = int(os.getenv("TURBOVEC_CHUNK_OVERLAP", "120"))
+    TURBOVEC_DEFAULT_TOP_K = int(os.getenv("TURBOVEC_DEFAULT_TOP_K", str(RAGFLOW_DEFAULT_TOP_K)))
+    TURBOVEC_DEFAULT_DATASET_IDS = [
+        item.strip()
+        for item in os.getenv("TURBOVEC_DEFAULT_DATASET_IDS", "").split(",")
+        if item.strip()
+    ]
 
     CORS_ORIGINS = [
         item.strip()

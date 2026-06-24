@@ -17,7 +17,6 @@ class WorkflowRegistry:
 registry = WorkflowRegistry()
 registry.register("generate_assignment", StudentWritingGraphBuilder())
 registry.register("polish_assignment", StudentWritingGraphBuilder())
-registry.register("imitate_assignment", StudentWritingGraphBuilder())
 
 
 def get_graph():

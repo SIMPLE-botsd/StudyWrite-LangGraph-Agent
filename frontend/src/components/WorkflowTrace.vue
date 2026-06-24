@@ -47,7 +47,7 @@ const labels: Record<string, string> = {
   plan_outline: '规划提纲',
   write_draft: '生成初稿',
   evaluate_draft: '质量评估',
-  revise_draft: '自动修订',
+  revise_draft: '深度修订',
   render: '整理结果',
   save_memory: '写入记忆',
 };

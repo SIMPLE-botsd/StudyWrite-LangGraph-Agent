@@ -240,9 +240,8 @@ function kindName(value: string) {
 
 function featureName(value: string) {
   const map: Record<string, string> = {
-    generate_assignment: '起草',
-    polish_assignment: '润色',
-    imitate_assignment: '仿写',
+    generate_assignment: '生成文章',
+    polish_assignment: '文章润色',
   };
   return map[value] || value || '写作';
 }

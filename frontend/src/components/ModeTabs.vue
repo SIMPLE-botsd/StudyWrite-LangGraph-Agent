@@ -15,14 +15,13 @@
 </template>
 
 <script setup lang="ts">
-import { FilePenLine, Paintbrush, Repeat2 } from 'lucide-vue-next';
+import { FilePenLine, Paintbrush } from 'lucide-vue-next';
 
 defineProps<{ modelValue: string }>();
 defineEmits<{ 'update:modelValue': [value: string] }>();
 
 const items = [
-  { value: 'draft', label: '起草', icon: FilePenLine },
-  { value: 'polish', label: '润色', icon: Paintbrush },
-  { value: 'imitate', label: '仿写', icon: Repeat2 },
+  { value: 'draft', label: '生成文章', icon: FilePenLine },
+  { value: 'polish', label: '文章润色', icon: Paintbrush },
 ];
 </script>

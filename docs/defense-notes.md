@@ -20,6 +20,6 @@
 3. `retrieve_knowledge` 根据作业类型匹配写作结构。
 4. `plan_outline` 输出提纲。
 5. `write_draft` 调用百炼模型生成初稿。
-6. `evaluate_draft` 给出结构、贴题、材料、语气、原创性评分。
-7. 条件边判断是否进入 `revise_draft`。
+6. 默认直接整理最终结果，保证课堂演示速度。
+7. 用户开启“深度打磨”后，`evaluate_draft` 给出结构、贴题、材料、语气、原创性评分，并进入 `revise_draft` 深度修订。
 8. `save_memory` 写回长期记忆，下一次任务可召回。
