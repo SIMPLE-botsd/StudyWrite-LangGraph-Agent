@@ -42,6 +42,7 @@ async def polish_assignment(payload: PolishWritingRequest, request: Request):
 @router.post("/assignment_suggestion")
 async def assignment_suggestion(payload: AssignmentSuggestionRequest):
     try:
+        # “一键 AI 生成题材”只生成表单参数，不直接写正文，用户仍可以编辑后再进入 Agent 工作流。
         prompt = (
             "请为一个学生写作智能体生成一组全新的课程写作题材和表单参数，严格输出 JSON，不要 Markdown。"
             "JSON 字段必须包含：title, assignment_type, task_description, materials, style, "
@@ -76,6 +77,7 @@ async def assignment_suggestion(payload: AssignmentSuggestionRequest):
 def _parse_suggestion_json(raw: str, payload: AssignmentSuggestionRequest) -> dict:
     defaults = _default_suggestion(payload)
     try:
+        # 兼容模型偶尔包一层 Markdown 或解释文字的情况，只抽取第一段 JSON 对象。
         match = re.search(r"\{.*\}", raw, flags=re.S)
         candidate = match.group(0) if match else raw
         candidate = candidate.strip().strip("`")
@@ -96,6 +98,7 @@ def _normalize_suggestion(data: dict, payload: AssignmentSuggestionRequest) -> d
 
 
 def _stringify_suggestion_value(value) -> str:
+    # 模型可能返回数组或对象，统一压成表单能直接显示的字符串。
     if value is None:
         return ""
     if isinstance(value, str):

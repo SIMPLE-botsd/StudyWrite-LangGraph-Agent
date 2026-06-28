@@ -18,6 +18,7 @@ from app.graph.states import StudentWritingState
 
 
 def route_after_write(state: StudentWritingState) -> str:
+    # “深度打磨”开启时才进入评估和修订，否则直接整理结果，减少普通生成的等待时间。
     return "evaluate_draft" if state.get("inputs", {}).get("deep_polish") else "render"
 
 
@@ -50,6 +51,7 @@ class StudentWritingGraphBuilder(BaseGraphBuilder):
 
     def _build_graph(self, compile_with_checkpointer: bool = True):
         workflow = StateGraph(StudentWritingState)
+        # 主链路：记忆召回 -> 任务理解 -> 知识检索 -> 提纲 -> 正文 -> 可选评估修订 -> 渲染 -> 保存。
         workflow.add_node("recall_memory", recall_memory_node)
         workflow.add_node("analyze_assignment", analyze_assignment_node)
         workflow.add_node("retrieve_knowledge", retrieve_knowledge_node)

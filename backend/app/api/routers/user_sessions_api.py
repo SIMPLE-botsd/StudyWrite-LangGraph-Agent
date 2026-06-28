@@ -16,6 +16,7 @@ async def list_user_sessions(
     include_deleted: bool = Query(False),
     deleted_only: bool = Query(False),
 ):
+    # 左侧会话列表只读取未删除会话；需要回收站时通过 include_deleted/deleted_only 控制。
     rows = await get_memory_service().repo.list_sessions(
         user_id=user_id,
         limit=limit,
@@ -48,6 +49,7 @@ async def get_user_session(
 
 @router.delete("/{session_id}")
 async def soft_delete_user_session(user_id: str, session_id: str):
+    # 给用户提供软删除能力，不物理删除对话和生成文章，便于误删恢复和答辩检查数据。
     ok = await get_memory_service().repo.soft_delete_session(user_id, session_id)
     if not ok:
         raise HTTPException(status_code=404, detail="会话不存在")

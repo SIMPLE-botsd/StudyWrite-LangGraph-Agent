@@ -16,13 +16,14 @@ class KnowledgeFile:
 
 
 class KnowledgeService:
-    """Facade used by routes and graph nodes for document retrieval."""
+    """知识库统一入口：对上层隐藏 RAGFlow 与本地 TurboVec 的差异。"""
 
     @property
     def backend(self) -> str:
         return settings.KNOWLEDGE_BACKEND
 
     def _use_turbovec(self) -> bool:
+        # 课程演示优先保证离线可跑，本地 TurboVec/SQLite 后端不依赖外部知识库服务。
         return self.backend.lower() in {"turbovec", "local_turbovec", "local", "sqlite"}
 
     def status(self) -> dict[str, Any]:
@@ -41,6 +42,7 @@ class KnowledgeService:
         return await ragflow_service.create_dataset(name, description)
 
     async def upload_document(self, dataset_id: str, file: KnowledgeFile) -> dict[str, Any]:
+        # 上传接口只接收统一文件对象，具体如何解析、切片和建索引交给当前知识库后端。
         if self._use_turbovec():
             return await turbovec_service.upload_document(
                 dataset_id,
@@ -70,6 +72,7 @@ class KnowledgeService:
         return await ragflow_service.initialize_writing_datasets()
 
     def format_chunks(self, chunks: list[dict[str, Any]], limit: int = 6) -> str:
+        # Graph 节点只需要可放进 Prompt 的文本，上下游不直接依赖某个检索服务的原始字段。
         if self._use_turbovec():
             return format_turbovec_chunks(chunks, limit=limit)
         return format_rag_chunks(chunks, limit=limit)

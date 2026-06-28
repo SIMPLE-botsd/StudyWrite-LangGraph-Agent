@@ -11,6 +11,7 @@ from app.utils.workflow_events import workflow_done, workflow_error, workflow_st
 
 class BaseGraphBuilder:
     def __init__(self):
+        # checkpointer 让同一个 session_id 的 LangGraph 执行拥有可追踪状态，方便多轮演示。
         self.checkpointer = InMemorySaver()
         self.app = self._build_graph()
 
@@ -34,6 +35,7 @@ class BaseGraphBuilder:
     async def process(self, inputs: dict[str, Any]):
         session_id = inputs.get("session_id", "demo-session") or "demo-session"
         config = {"configurable": {"thread_id": session_id}}
+        # 初始 State 只放输入、第一条用户消息和修订计数，后续字段由各节点逐步写回。
         initial_state = {
             "inputs": inputs,
             "messages": [HumanMessage(content=self.initial_message(inputs))],
@@ -56,6 +58,7 @@ class BaseGraphBuilder:
 
                 display_name = node_name_map[node_id]
                 if kind == "on_chain_start":
+                    # 前端“节点流式输出”依赖 start/done 成对事件，这里过滤重复 start，避免界面闪动。
                     if node_id in emitted_starts:
                         continue
                     if run_id:
@@ -68,6 +71,7 @@ class BaseGraphBuilder:
                         continue
                     output = event.get("data", {}).get("output", {})
                     field = output_map.get(node_id)
+                    # 每个节点只把关键产物推给前端，不直接暴露完整 State，界面更干净。
                     text = self._extract_text(output, field)
                     if not text and field:
                         continue
@@ -83,6 +87,7 @@ class BaseGraphBuilder:
                     )
 
             if not final_output:
+                # 某些 LangGraph 事件流不会单独吐出 render 结果，结束后再从 state 兜底取一次。
                 state = await self.app.aget_state(config)
                 final_output = state.values.get("final_output", "")
                 if final_output:

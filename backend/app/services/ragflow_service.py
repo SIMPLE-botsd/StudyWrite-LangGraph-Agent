@@ -22,11 +22,7 @@ class RagflowFile:
 
 
 class RagflowService:
-    """Small proxy around RAGFlow's HTTP API.
-
-    The browser never receives the RAGFlow API key. All calls go through this
-    backend so the student project remains safe to demo locally.
-    """
+    """RAGFlow HTTP 代理层：浏览器不直接接触 API Key，便于安全演示和统一异常处理。"""
 
     def __init__(self):
         self.base_url = settings.RAGFLOW_BASE_URL
@@ -71,6 +67,7 @@ class RagflowService:
         document_ids = [doc["id"] for doc in normalized_docs if doc.get("id")]
         parse_result = None
         if document_ids:
+            # RAGFlow 上传后需要显式触发解析，解析完成后才能参与后续检索。
             parse_result = await self.parse_documents(dataset_id, document_ids)
         return {"documents": normalized_docs, "parse": parse_result}
 
@@ -94,6 +91,7 @@ class RagflowService:
         if not clean_ids:
             return {"chunks": [], "message": "未选择 RAGFlow 知识库。"}
 
+        # 这里保持 RAGFlow 原生 retrieval 入参，返回后再标准化成项目内部的 chunk 结构。
         body = {
             "question": question,
             "dataset_ids": clean_ids,
@@ -134,6 +132,7 @@ class RagflowService:
             raise RagflowNotConfigured("RAGFLOW_API_KEY 未配置，请先在 backend/.env 中填写 RAGFlow API Key。")
         url = f"{self.base_url}{path}"
         headers = kwargs.pop("headers", {})
+        # Key 只在后端请求头中使用，前端接口和浏览器日志都不会暴露真实密钥。
         headers["Authorization"] = f"Bearer {self.api_key}"
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.request(method, url, headers=headers, **kwargs)
@@ -198,6 +197,7 @@ class RagflowService:
         }
 
     def _normalize_chunk(self, item: Any) -> dict[str, Any]:
+        # 不同版本 RAGFlow 字段名略有差异，统一字段后 Agent 和引用模块才能稳定复用。
         if not isinstance(item, dict):
             return {"content": str(item), "score": 0, "document_name": ""}
         content = (

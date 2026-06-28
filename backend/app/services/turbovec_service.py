@@ -30,7 +30,7 @@ class TurboVecFile:
 
 
 class HashingTextEmbedder:
-    """Small deterministic text embedder for local demo retrieval."""
+    """轻量确定性向量器：用于本地演示检索，不依赖模型下载或第三方 Embedding API。"""
 
     def __init__(self, dim: int):
         if dim <= 0 or dim % 8 != 0:
@@ -38,6 +38,7 @@ class HashingTextEmbedder:
         self.dim = dim
 
     def encode(self, texts: list[str]) -> np.ndarray:
+        # 哈希向量的好处是速度快、结果稳定，适合课程演示中的小型知识库检索。
         vectors = np.zeros((len(texts), self.dim), dtype=np.float32)
         for row, text in enumerate(texts):
             for feature, weight in self._features(text):
@@ -71,7 +72,7 @@ class HashingTextEmbedder:
 
 
 class TurboVecKnowledgeService:
-    """Local document retrieval backed by SQLite metadata and turbovec index."""
+    """本地知识库服务：SQLite 存元数据和切片，TurboVec/NumPy 负责相似度检索。"""
 
     def __init__(self):
         self.db_path = settings.TURBOVEC_DB_PATH
@@ -85,6 +86,7 @@ class TurboVecKnowledgeService:
         self._id_map_index = self._load_index_class()
 
     def _load_index_class(self):
+        # TurboVec 是可选增强；导入失败时继续使用 NumPy 兜底，保证知识库功能不瘫痪。
         source_path = str(settings.TURBOVEC_SOURCE_PATH or "").strip()
         if source_path:
             source = Path(source_path).expanduser()
@@ -126,6 +128,7 @@ class TurboVecKnowledgeService:
         return await asyncio.to_thread(self._create_dataset_sync, name, description)
 
     async def upload_document(self, dataset_id: str, file: TurboVecFile) -> dict[str, Any]:
+        # SQLite 操作和索引重建放到线程里执行，避免阻塞 FastAPI 的事件循环。
         return await asyncio.to_thread(self._upload_document_sync, dataset_id, file)
 
     async def retrieve(
@@ -162,6 +165,7 @@ class TurboVecKnowledgeService:
 
     def _init_sync(self) -> None:
         with self._connect() as conn:
+            # 三张表对应“知识库 - 文档 - 切片”，满足课程要求中的资料存储和检索链路。
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS turbovec_datasets (
@@ -263,6 +267,7 @@ class TurboVecKnowledgeService:
             dataset_id = dataset["id"]
         self._ensure_dataset_exists(dataset_id)
 
+        # 上传后立即完成解码、切片、去重写库和索引重建，前端无需再触发额外解析步骤。
         text = self._decode_file(file.content)
         chunks = self._split_text(text)
         content_hash = hashlib.sha256(file.content).hexdigest()
@@ -331,6 +336,7 @@ class TurboVecKnowledgeService:
         clean_ids = [item for item in dataset_ids if item]
         if not clean_ids:
             clean_ids = settings.TURBOVEC_DEFAULT_DATASET_IDS
+        # 先按知识库范围取候选切片，再做向量检索，避免不同数据集之间互相污染引用来源。
         candidates = self._load_candidate_chunks(clean_ids)
         if not candidates:
             return {
@@ -358,6 +364,7 @@ class TurboVecKnowledgeService:
         if self._index is None:
             return self._retrieve_with_numpy(question, candidates, top_k)
 
+        # allowlist 限定本次选择的数据集，索引可以全量复用，查询时仍能做到按库过滤。
         query_vector = self.embedder.encode([question])
         allowlist = np.array([item["id"] for item in candidates], dtype=np.uint64)
         if len(allowlist) == 0:
@@ -374,6 +381,7 @@ class TurboVecKnowledgeService:
         return results
 
     def _retrieve_with_numpy(self, question: str, candidates: list[dict[str, Any]], top_k: int) -> list[dict[str, Any]]:
+        # NumPy 兜底走同一套哈希向量，虽然不如专门索引快，但小规模资料演示足够稳定。
         query_vector = self.embedder.encode([question])[0]
         doc_vectors = self.embedder.encode([item["content"] for item in candidates])
         scores = doc_vectors @ query_vector
@@ -387,6 +395,7 @@ class TurboVecKnowledgeService:
         if not self.turbovec_available:
             return
         with self._lock:
+            # 用切片总数判断索引是否过期，上传文档后会自动触发重建。
             total = self._chunk_count_sync()
             if self._index is not None and self._index_count == total:
                 return
@@ -487,6 +496,7 @@ class TurboVecKnowledgeService:
         while start < len(clean):
             end = min(start + chunk_size, len(clean))
             if end < len(clean):
+                # 优先在换行或句号处分块，降低引用片段被截断到半句话的概率。
                 boundary = max(clean.rfind("\n", start, end), clean.rfind("。", start, end))
                 if boundary > start + chunk_size * 0.55:
                     end = boundary + 1

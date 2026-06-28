@@ -28,6 +28,7 @@ async def handle_workflow_request(
     is_stream = bool(inputs.pop("is_stream", True))
 
     if not is_stream:
+        # 非流式模式主要给测试和脚本验证使用，前端正式交互默认走 SSE 流式事件。
         try:
             chunks = []
             final_text = ""
@@ -52,6 +53,7 @@ async def handle_workflow_request(
                 if await http_request.is_disconnected():
                     return
                 chunk["message_id"] = inputs["message_id"]
+                # SSE 每个 data 都是一段节点事件，前端据此增量更新 Agent 执行过程。
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
         except Exception as exc:
             error_chunk = {

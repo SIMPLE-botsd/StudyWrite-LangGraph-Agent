@@ -128,6 +128,7 @@ import {
   type MemoryOverview,
   type SessionDetail,
 } from '../services/api';
+import { compact } from '../utils/text';
 
 const props = defineProps<{
   overview: MemoryOverview | null;
@@ -256,11 +257,6 @@ function formatTime(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-function compact(text: string, limit: number) {
-  const clean = (text || '').replace(/\s+/g, ' ').trim();
-  return clean.length > limit ? `${clean.slice(0, limit)}...` : clean;
 }
 
 function setError(error: unknown) {

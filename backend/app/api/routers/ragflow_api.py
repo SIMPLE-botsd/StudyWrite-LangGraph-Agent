@@ -30,6 +30,7 @@ async def ragflow_upload_document(
     dataset_id: str = Form(""),
     file: UploadFile = File(...),
 ):
+    # 文件上传统一走 knowledge_service，当前配置可以在 RAGFlow 和本地 TurboVec 之间切换。
     content = await file.read()
     data = await _safe_call(
         knowledge_service.upload_document,
@@ -61,6 +62,7 @@ async def ragflow_initialize_writing():
 
 
 async def _safe_call(func, *args, **kwargs):
+    # 对外接口统一把底层知识库异常转成 HTTP 错误，前端不用区分具体后端实现。
     try:
         return await func(*args, **kwargs)
     except RagflowNotConfigured as exc:

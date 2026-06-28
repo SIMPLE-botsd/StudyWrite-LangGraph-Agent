@@ -88,16 +88,16 @@
             </span>
             <small>{{ message.time }}</small>
           </div>
-          <div v-if="message.role === 'user' && parsedUserMessage(message.content)" class="user-message-card">
-            <strong>{{ parsedUserMessage(message.content)?.title }}</strong>
+          <div v-if="message.role === 'user' && userMessageCard(message)" class="user-message-card">
+            <strong>{{ userMessageCard(message)?.title }}</strong>
             <div class="user-message-tags">
-              <span v-for="tag in parsedUserMessage(message.content)?.tags" :key="tag">{{ tag }}</span>
+              <span v-for="tag in userMessageCard(message)?.tags" :key="tag">{{ tag }}</span>
             </div>
-            <p v-if="parsedUserMessage(message.content)?.requirement">
-              {{ parsedUserMessage(message.content)?.requirement }}
+            <p v-if="userMessageCard(message)?.requirement">
+              {{ userMessageCard(message)?.requirement }}
             </p>
-            <div v-if="parsedUserMessage(message.content)?.materials" class="user-message-material">
-              {{ parsedUserMessage(message.content)?.materials }}
+            <div v-if="userMessageCard(message)?.materials" class="user-message-material">
+              {{ userMessageCard(message)?.materials }}
             </div>
           </div>
           <p v-else-if="message.role === 'user'">{{ message.content }}</p>
@@ -142,7 +142,7 @@
           </details>
         </article>
 
-        <article v-if="agentEvents.length" class="message-bubble assistant agent-bubble">
+        <article v-if="running && agentEvents.length" class="message-bubble assistant agent-bubble">
           <div class="message-meta">
             <span class="message-author">
               <i>D</i>
@@ -417,6 +417,9 @@ import {
   type RagflowStatus,
   type WorkflowChunk,
 } from './services/api';
+import { markdownToHtml, markdownToPlainText } from './utils/markdown';
+import { extractArticleTitle, isArticleContent, parsedUserMessage } from './utils/messages';
+import { compact } from './utils/text';
 
 type Mode = 'draft' | 'polish';
 
@@ -446,18 +449,12 @@ interface AgentEvent {
   detail?: string;
 }
 
-interface CitationItem {
-  id: number;
-  source: string;
-  content: string;
-  score?: number | null;
-}
-
 const mode = ref<Mode>('draft');
 const running = ref(false);
 const suggesting = ref(false);
 const notice = ref('');
 const result = ref('');
+const runResult = ref('');
 const editorMode = ref<'edit' | 'preview'>('preview');
 const modelConfig = ref<ModelConfig | null>(null);
 const sessions = ref<ConversationSession[]>([]);
@@ -617,10 +614,22 @@ const primaryTextModel = computed({
 });
 
 const selectedDatasetText = computed(() => {
-  const count = form.rag_dataset_ids.length;
+  const names = selectedDatasetNames.value;
   if (uploadedDocumentName.value) return uploadedDocumentName.value;
-  if (!count) return '未选择资料';
-  return `已选 ${count} 个知识库`;
+  if (!names.length) return '未选择资料';
+  return compact(names.join('、'), 36);
+});
+
+const selectedDatasetNames = computed(() => {
+  const selected = new Set(form.rag_dataset_ids || []);
+  const names = datasets.value
+    .filter((dataset) => selected.has(dataset.id))
+    .map((dataset) => dataset.name)
+    .filter(Boolean);
+  if (uploadedDocumentName.value && !names.includes(uploadedDocumentName.value)) {
+    names.unshift(uploadedDocumentName.value);
+  }
+  return names;
 });
 
 const uploadTargetText = computed(() => uploadedDocumentName.value || '上传后显示文件名');
@@ -792,10 +801,11 @@ async function openSession(sessionId: string, options: { silentError?: boolean }
   syncChoicesFromForm();
   chatMessages.value = detail.turns.map((turn: ConversationTurn, index: number) => {
     const articleContent = turn.role === 'assistant' && isArticleTurn(turn) ? turn.content : undefined;
+    const nextTurn = detail.turns[index + 1];
     return {
       id: `${turn.role}-${turn.turn_index}-${index}`,
       role: turn.role === 'user' ? 'user' : 'assistant',
-      content: displayTurnContent(turn),
+      content: turn.role === 'user' ? historyUserContent(turn, nextTurn) : displayTurnContent(turn),
       time: formatTime(turn.created_at),
       articleTitle: articleContent ? articleTitleFromTurn(turn) : undefined,
       articleContent,
@@ -894,7 +904,7 @@ async function runWorkflow() {
 
   running.value = true;
   notice.value = 'Agent 工作流正在运行...';
-  result.value = '';
+  runResult.value = '';
   traceNodes.value = [];
   agentEvents.value = [];
   selectedSessionId.value = form.session_id;
@@ -920,9 +930,11 @@ async function runWorkflow() {
 
   try {
     await streamWorkflow(endpoint, buildPayload(), handleChunk);
-    if (result.value) {
+    if (runResult.value) {
       updateStreamingAssistant('已完成，正文已写入右侧文本编辑器。你可以直接继续修改。');
-      attachArticleToStreamingAssistant(result.value);
+      attachNodesToStreamingAssistant();
+      attachArticleToStreamingAssistant(runResult.value);
+      agentEvents.value = [];
     }
     await refreshModelConfig();
     await loadSessions();
@@ -1003,6 +1015,7 @@ function buildPayload() {
     memory_k: form.memory_k,
     use_rag: form.use_rag,
     rag_dataset_ids: form.rag_dataset_ids,
+    rag_dataset_names: selectedDatasetNames.value,
     rag_query: form.rag_query,
     rag_top_k: form.rag_top_k,
     deep_polish: form.deep_polish,
@@ -1044,40 +1057,6 @@ function buildUserMessage() {
   return lines.join('\n');
 }
 
-function parsedUserMessage(content: string) {
-  const parsed = parseMessageFields(content);
-  if (!parsed['标题'] && !parsed['功能'] && !parsed['要求']) return null;
-  const tags = [
-    parsed['功能'],
-    parsed['类型'],
-    parsed['字数'] ? `${parsed['字数']} 字` : '',
-    parsed['深度打磨'] === '开启' ? '深度打磨' : '',
-    parsed['知识库'],
-  ].filter(Boolean);
-  return {
-    title: parsed['标题'] || '新的写作任务',
-    tags,
-    requirement: parsed['要求'] || '',
-    materials: parsed['内容/资料'] || parsed['原文'] || '',
-  };
-}
-
-function parseMessageFields(content: string) {
-  const labels = ['功能', '标题', '类型', '字数', '深度打磨', '要求', '内容/资料', '原文', '知识库'];
-  const nextLabelPattern = new RegExp(`\\n(?=${labels.map(escapeRegExp).join('|')}：)`, 'g');
-  return (content || '')
-    .split(nextLabelPattern)
-    .reduce<Record<string, string>>((acc, block) => {
-      const match = /^([^：\n]+)：([\s\S]*)$/.exec(block.trim());
-      if (match) acc[match[1]] = match[2].trim();
-      return acc;
-    }, {});
-}
-
-function escapeRegExp(text: string) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 function handleChunk(chunk: WorkflowChunk) {
   const existing = traceNodes.value.find((item) => item.id === chunk.node);
   const nextState = chunk.event === 'error' ? 'error' : chunk.event === 'start' ? 'start' : 'done';
@@ -1100,6 +1079,7 @@ function handleChunk(chunk: WorkflowChunk) {
   }
 
   if (chunk.node === 'render' && chunk.typy === 'result') {
+    runResult.value = chunk.text;
     result.value = chunk.text;
     updateStreamingAssistant('正文已生成，并同步到右侧文本编辑器。');
   }
@@ -1164,6 +1144,15 @@ function attachArticleToStreamingAssistant(content: string) {
     target.articleContent = content;
     target.articleTitle = extractArticleTitle(content) || form.title || '未命名文章';
   }
+}
+
+function attachNodesToStreamingAssistant() {
+  const target = chatMessages.value.find((item) => item.id === streamingAssistantId.value);
+  if (!target || !agentEvents.value.length) return;
+  target.nodes = agentEvents.value.map((event, index) => ({
+    ...event,
+    id: `${event.node}-snapshot-${index}`,
+  }));
 }
 
 function loadArticleToEditor(content?: string, title?: string) {
@@ -1300,11 +1289,6 @@ function formatTime(value: string) {
   });
 }
 
-function compact(text: string, limit: number) {
-  const clean = (text || '').replace(/\s+/g, ' ').trim();
-  return clean.length > limit ? `${clean.slice(0, limit)}...` : clean;
-}
-
 function displayTurnContent(turn: ConversationTurn) {
   if (turn.role === 'assistant') {
     if (isArticleTurn(turn)) {
@@ -1315,32 +1299,34 @@ function displayTurnContent(turn: ConversationTurn) {
   return turn.content;
 }
 
+function historyUserContent(turn: ConversationTurn, nextTurn?: ConversationTurn) {
+  const content = turn.content || '';
+  if (/^知识库：/m.test(content)) return content;
+  const sources = citationSourcesFromMarkdown(nextTurn?.content || '');
+  if (!sources.length) return content;
+  return `${content}\n知识库：${compact(sources.join('、'), 42)}`;
+}
+
+function citationSourcesFromMarkdown(markdown: string) {
+  const sources = new Set<string>();
+  for (const match of markdown.matchAll(/^\[\^\d+\]:\s*([^\n·]+)/gm)) {
+    const source = match[1]?.trim();
+    if (source) sources.add(source);
+  }
+  return Array.from(sources);
+}
+
+function userMessageCard(message: ChatMessage) {
+  if (message.role !== 'user') return null;
+  return parsedUserMessage(message.content);
+}
+
 function articleTitleFromTurn(turn: ConversationTurn) {
   return extractArticleTitle(turn.content) || '未命名文章';
 }
 
 function isArticleTurn(turn: ConversationTurn) {
   return turn.role === 'assistant' && isArticleContent(turn.content);
-}
-
-function isArticleContent(content: string) {
-  const clean = cleanDisplayMarkdown(content || '');
-  if (!clean || clean.length < 40) return false;
-  if (/^(执行失败|工作流执行失败|请求失败|该轮没有生成)/.test(clean)) return false;
-  return /^#\s+.+$/m.test(clean) || /(?:一、|二、|三、|引言|结语|润色目标)/.test(clean);
-}
-
-function extractArticleTitle(markdown: string) {
-  const clean = (markdown || '').trim();
-  const heading = /^#\s+(.+)$/m.exec(clean);
-  if (heading?.[1]) {
-    return heading[1].replace(/\[\^\d+\]/g, '').trim();
-  }
-  const firstTextLine = clean
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line && !line.startsWith('[^') && !line.startsWith('<!--'));
-  return firstTextLine ? compact(firstTextLine.replace(/^#+\s*/, ''), 36) : '';
 }
 
 function historyNodesFromTurn(turn: ConversationTurn): AgentEvent[] {
@@ -1397,252 +1383,4 @@ function normalizeHistoryNode(item: Record<string, unknown>, index: number): Age
   };
 }
 
-function markdownToHtml(markdown: string) {
-  const parsed = parseCitationMarkdown(markdown);
-  const lines = parsed.markdown.split(/\r?\n/);
-  const citations = parsed.citations;
-  const html: string[] = [];
-  let inList = false;
-  let inCode = false;
-  let codeLines: string[] = [];
-  let inCitationSection = false;
-
-  const closeList = () => {
-    if (inList) {
-      html.push('</ul>');
-      inList = false;
-    }
-  };
-
-  for (const rawLine of lines) {
-    const line = rawLine.replace(/\s+$/, '');
-    if (line.trim().startsWith('```')) {
-      if (inCode) {
-        html.push(`<pre><code>${codeLines.join('\n')}</code></pre>`);
-        codeLines = [];
-        inCode = false;
-      } else {
-        closeList();
-        inCode = true;
-      }
-      continue;
-    }
-
-    if (inCode) {
-      codeLines.push(escapeHtml(line));
-      continue;
-    }
-
-    if (!line.trim()) {
-      closeList();
-      continue;
-    }
-
-    if (/^[-*_]{3,}$/.test(line.trim())) {
-      closeList();
-      html.push('<hr />');
-      continue;
-    }
-
-    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
-    if (heading) {
-      closeList();
-      const level = heading[1].length;
-      const headingText = heading[2].trim();
-      inCitationSection = /引用|知识库|参考材料|参考资料/.test(headingText);
-      html.push(`<h${level}>${renderInlineMarkdown(headingText, citations)}</h${level}>`);
-      continue;
-    }
-
-    const bullet = /^\s*(?:[-*]|\d+\.)\s+(.+)$/.exec(line);
-    if (bullet) {
-      if (!inList) {
-        html.push('<ul>');
-        inList = true;
-      }
-      html.push(`<li>${renderInlineMarkdown(bullet[1], citations)}</li>`);
-      continue;
-    }
-
-    const quote = /^>\s?(.+)$/.exec(line);
-    if (quote) {
-      closeList();
-      const quoteText = quote[1].trim();
-      const className = inCitationSection || /^(来源|引用|材料|知识库|片段)[:：]/.test(quoteText)
-        ? ' class="citation-block"'
-        : '';
-      html.push(`<blockquote${className}>${renderInlineMarkdown(quoteText, citations)}</blockquote>`);
-      continue;
-    }
-
-    closeList();
-    html.push(`<p${inCitationSection ? ' class="citation-paragraph"' : ''}>${renderInlineMarkdown(line, citations)}</p>`);
-  }
-
-  closeList();
-  if (inCode) {
-    html.push(`<pre><code>${codeLines.join('\n')}</code></pre>`);
-  }
-  return html.join('\n') || '<p class="empty-preview">暂无 Markdown 内容。</p>';
-}
-
-function parseCitationMarkdown(markdown: string): { markdown: string; citations: CitationItem[] } {
-  const citations: CitationItem[] = [];
-  let clean = (markdown || '').replace(/<!--DEEPPEN_CITATIONS\s*([\s\S]*?)\s*DEEPPEN_CITATIONS-->/g, (_match, raw) => {
-    try {
-      const parsed = JSON.parse(raw.trim());
-      if (Array.isArray(parsed)) {
-        parsed.forEach((item, index) => {
-          citations.push({
-            id: Number(item.id) || index + 1,
-            source: String(item.source || item.document_name || '知识库片段'),
-            content: String(item.content || ''),
-            score: typeof item.score === 'number' ? item.score : null,
-          });
-        });
-      }
-    } catch {
-      // 隐藏引用元数据解析失败时，仅隐藏原始块，正文仍正常显示。
-    }
-    return '';
-  });
-  clean = clean.replace(
-    /^\[\^(\d+)\]:\s*(.+?)(?:\n[ \t]{2,}([^\n]+))?\s*$/gm,
-    (_match, rawId, rawMeta, rawContent = '') => {
-      const id = Number(rawId);
-      const meta = String(rawMeta || '').trim();
-      const content = String(rawContent || '').trim();
-      const scoreMatch = /(?:·\s*)?相关度\s*([0-9.]+)/.exec(meta);
-      const source = meta
-        .replace(/(?:·\s*)?相关度\s*[0-9.]+/g, '')
-        .replace(/(?:·\s*)?切片\s*[^·]+/g, '')
-        .trim() || '知识库片段';
-      const existing = citations.find((item) => item.id === id);
-      if (!existing) {
-        citations.push({
-          id,
-          source,
-          content,
-          score: scoreMatch ? Number(scoreMatch[1]) : null,
-        });
-      }
-      return '';
-    },
-  );
-  clean = cleanDisplayMarkdown(clean);
-  return renumberParsedCitations(clean, citations);
-}
-
-function renumberParsedCitations(markdown: string, citations: CitationItem[]): { markdown: string; citations: CitationItem[] } {
-  if (!citations.length) return { markdown, citations };
-  const byId = new Map(citations.map((item) => [item.id, item]));
-  const ordered: CitationItem[] = [];
-  const oldToNew = new Map<number, number>();
-  const clean = markdown.replace(/\[\^(\d+)\]/g, (match, rawId) => {
-    const oldId = Number(rawId);
-    const citation = byId.get(oldId);
-    if (!citation) return match;
-    if (!oldToNew.has(oldId)) {
-      const nextId = oldToNew.size + 1;
-      oldToNew.set(oldId, nextId);
-      ordered.push({ ...citation, id: nextId });
-    }
-    return `[^${oldToNew.get(oldId)}]`;
-  });
-  return { markdown: clean, citations: ordered };
-}
-
-function cleanDisplayMarkdown(markdown: string) {
-  return markdown
-    .replace(/\n*##\s*知识库引用[\s\S]*?(?=\n##\s*深度打磨记录|\n#\s|$)/g, '')
-    .replace(/\n*#{1,6}\s*(?:📝\s*)?(?:定稿)?修改提示[\s\S]*$/gi, '')
-    .replace(/\n*#{1,6}\s*(?:📚\s*)?参考文献[\s\S]*$/gi, '')
-    .replace(/\n*#{1,6}\s*(?:修改说明|给同学的修改提示|待确认素材|素材补充建议)[\s\S]*$/gi, '')
-    .replace(/[\[【（(]\s*(?:请|可|建议|此处|这里|待)\s*(?:填入|补充|替换|加入|搜索)[^\]】）)]*[\]】）)]/g, '')
-    .replace(/\*?\s*此处可补充[^。；;\n]*(?:。)?/g, '')
-    .replace(/参考输入摘要[:：][\s\S]*?(?=\n#{1,3}\s|\n质量自检|\n修改建议|$)/g, '')
-    .replace(/你是课程作业[\s\S]*?(?=\n\n|$)/g, '')
-    .replace(/请把下面写作任务拆解为[\s\S]*?(?=\n\n|$)/g, '')
-    .replace(/请评估下面初稿[\s\S]*?(?=\n\n|$)/g, '')
-    .replace(/这是本地演示模型生成的可编辑文本。\s*/g, '')
-    .trim();
-}
-
-function markdownToPlainText(markdown: string) {
-  const parsed = parseCitationMarkdown(markdown || '');
-  const body = parsed.markdown
-    .split(/\r?\n/)
-    .map((line) => markdownLineToPlainText(line))
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-
-  const usedIds = Array.from(new Set(
-    [...(parsed.markdown.matchAll(/\[\^(\d+)\]/g))].map((match) => Number(match[1])),
-  ));
-  const citations = parsed.citations.filter((item) => usedIds.length === 0 || usedIds.includes(item.id));
-  if (!citations.length) return body;
-
-  const citationText = citations
-    .map((item) => {
-      const scoreText = typeof item.score === 'number' ? `，相关度 ${item.score.toFixed(3)}` : '';
-      const content = compact(item.content || '', 360);
-      return `引用 ${item.id}：${item.source || '知识库片段'}${scoreText}\n${content}`;
-    })
-    .join('\n\n');
-  return `${body}\n\n引用来源\n${citationText}`;
-}
-
-function markdownLineToPlainText(line: string) {
-  const trimmed = line.trim();
-  if (!trimmed) return '';
-  return trimmed
-    .replace(/^#{1,6}\s+/, '')
-    .replace(/^>\s?/, '')
-    .replace(/^[-*]\s+/, '')
-    .replace(/^\d+\.\s+/, '')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/\[\^(\d+)\]/g, '$1')
-    .replace(/<[^>]+>/g, '')
-    .trim();
-}
-
-function renderInlineMarkdown(text: string, citations: CitationItem[] = []) {
-  return escapeHtml(text)
-    .replace(/\[\^(\d+)\]/g, (_match, rawId) => renderCitationBadge(Number(rawId), citations))
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>');
-}
-
-function renderCitationBadge(id: number, citations: CitationItem[]) {
-  const citation = citations.find((item) => item.id === id);
-  if (!citation) {
-    return `<span class="citation-ref missing" tabindex="0"><span class="citation-number">${id}</span></span>`;
-  }
-  const scoreText = typeof citation.score === 'number' ? `相关度 ${citation.score.toFixed(3)}` : '知识库引用';
-  const source = escapeHtml(citation.source || '知识库片段');
-  const content = escapeHtml(compact(citation.content || '', 320));
-  return [
-    `<span class="citation-ref" tabindex="0" aria-label="引用 ${id}：${source}">`,
-    `<span class="citation-number">${id}</span>`,
-    '<span class="citation-tooltip">',
-    `<strong>${source}</strong>`,
-    `<small>${scoreText}</small>`,
-    `<span>${content}</span>`,
-    '</span>',
-    '</span>',
-  ].join('');
-}
-
-function escapeHtml(text: string) {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 </script>

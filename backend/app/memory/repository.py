@@ -31,6 +31,7 @@ class ConversationRepository:
 
     def _init_sync(self) -> None:
         with self._connect() as conn:
+            # conversation_sessions 支持软删除；conversation_turns 保存每轮消息和 Agent 节点快照。
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS conversation_sessions (
@@ -78,6 +79,7 @@ class ConversationRepository:
             self._ensure_column(conn, "conversation_sessions", "deleted_at", "TEXT")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, column_type: str) -> None:
+        # 兼容旧版本地数据库：已有用户数据不重建库，只补缺失字段。
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
@@ -88,6 +90,7 @@ class ConversationRepository:
     def _create_session_sync(self, session_id: str, user_id: str, title: str, feature: str) -> None:
         now = utc_now()
         with self._connect() as conn:
+            # 已删除会话如果再次被同一 session_id 写入，自动恢复，避免“假删除”挡住继续对话。
             conn.execute(
                 """
                 INSERT INTO conversation_sessions(session_id, user_id, title, feature, created_at, updated_at)
@@ -178,6 +181,7 @@ class ConversationRepository:
         include_deleted: bool,
         deleted_only: bool,
     ) -> list[dict[str, Any]]:
+        # 会话列表只返回摘要，左侧栏保持轻量；完整正文和节点信息在详情接口里读取。
         filters = ["s.user_id=?"]
         params: list[Any] = [user_id]
         if deleted_only:
@@ -278,6 +282,7 @@ class ConversationRepository:
         return [self._row_to_turn(row) for row in rows]
 
     async def soft_delete_session(self, user_id: str, session_id: str) -> bool:
+        # 软删除只标记 deleted_at，Navicat/SQLite 中仍能看到历史数据，前端也可以恢复。
         return await asyncio.to_thread(self._set_session_deleted_sync, user_id, session_id, utc_now())
 
     async def restore_session(self, user_id: str, session_id: str) -> bool:
@@ -380,6 +385,7 @@ class ConversationRepository:
         query_terms = set(self._tokenize(query))
         if not query_terms:
             return memories[:limit]
+        # 这里用轻量关键词重叠做记忆召回，避免为长期记忆再引入一套向量数据库。
         scored: list[LongTermMemory] = []
         for memory in memories:
             haystack = " ".join([memory.content, " ".join(memory.tags), memory.kind])
@@ -481,6 +487,7 @@ class ConversationRepository:
         return text[:limit] + ("..." if len(text) > limit else "")
 
     def _repair_mojibake(self, text: str) -> str:
+        # 早期数据可能出现 UTF-8 被按 latin1 读出的乱码，展示前尽量自动修复。
         if not text or not any(marker in text for marker in ("ä", "å", "è", "ç", "ã", "â")):
             return text or ""
         try:

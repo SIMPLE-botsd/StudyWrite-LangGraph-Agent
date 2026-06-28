@@ -9,7 +9,7 @@ from app.memory.repository import ConversationRepository
 
 
 class ConversationMemoryService:
-    """SQLite long-term memory plus formatted context for graph nodes."""
+    """会话记忆服务：从 SQLite 读取上下文，并整理成 Agent 节点可直接使用的文本。"""
 
     def __init__(self, repository: ConversationRepository):
         self.repo = repository
@@ -32,6 +32,7 @@ class ConversationMemoryService:
         recent_turns = await self.repo.get_recent_turns(session_id, limit=max_turns * 2)
         long_term = []
         if use_memory:
+            # 长期记忆按当前题目做轻量关键词召回，用来支持“继续写/按上次风格”等多轮需求。
             long_term = await self.repo.search_long_term_memories(user_id, query, limit=memory_k)
         return MemoryContext(
             session_id=session_id,
@@ -42,6 +43,7 @@ class ConversationMemoryService:
 
     def format_context_for_agent(self, context: MemoryContext) -> str:
         lines: list[str] = []
+        # 写入模型前先过滤脏记忆，避免历史里的错误提示和乱码继续污染新一轮生成。
         clean_memories = [m for m in context.long_term_memories if not self._looks_like_dirty_memory(m.content)]
         if clean_memories:
             lines.append("【长期记忆摘要】")
@@ -69,6 +71,7 @@ class ConversationMemoryService:
         nodes: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
+        # 每轮同时保存用户输入和助手输出，历史回放才能恢复完整对话与节点过程。
         await self.repo.create_session(session_id, user_id, title, feature)
         turn_index = await self.repo.get_max_turn_index(session_id) + 1
         await self.repo.add_turn(
@@ -121,6 +124,7 @@ class ConversationMemoryService:
             memories.append(("rule", f"写作时需要重点满足这些评分关注点：{rubric_focus}。", ["评分标准"]))
         if final_output and not self._looks_like_dirty_memory(final_output):
             preview = self._compact_memory(final_output, limit=180)
+            # 长期记忆只保存摘要，不保存全文，既减少污染，也避免下轮 Prompt 过长。
             memories.append(
                 (
                     "experience",

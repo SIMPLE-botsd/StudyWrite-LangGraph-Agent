@@ -7,6 +7,7 @@ from statistics import mean
 from app.core.config import settings
 from app.core.llm_factory import invoke_text
 from app.graph.states import StudentWritingState
+from app.graph.utils.citations import render_final_article
 from app.memory import get_memory_service
 from app.services.knowledge_service import knowledge_service
 from app.services.writing_knowledge import format_guide, get_assignment_guide
@@ -25,6 +26,54 @@ def _clean(text: str, limit: int = 1200) -> str:
 def _query_from_inputs(inputs: dict) -> str:
     keys = ["title", "assignment_type", "task_description", "materials", "content", "change_request"]
     return "\n".join(str(inputs.get(key, "")).strip() for key in keys if str(inputs.get(key, "")).strip())
+
+
+def _display_query_from_inputs(inputs: dict, rag_chunks: list[dict] | None = None) -> str:
+    # 会话历史展示依赖这份结构化文本；不要只保存检索 query，否则刷新后会丢失功能、字数和知识库标签。
+    feature = inputs.get("feature", "generate_assignment")
+    is_polish = feature == "polish_assignment"
+    lines = [
+        f"功能：{'文章润色' if is_polish else '生成文章'}",
+        f"标题：{inputs.get('title', '未命名写作任务')}",
+        f"类型：{inputs.get('assignment_type', '润色修改' if is_polish else '课程论文')}",
+    ]
+    word_count = str(inputs.get("word_count", "")).strip()
+    if word_count:
+        lines.append(f"字数：{word_count}")
+    lines.extend(
+        [
+            f"深度打磨：{'开启' if inputs.get('deep_polish') else '关闭'}",
+            f"要求：{inputs.get('change_request') or inputs.get('task_description') or '根据输入完成写作。'}",
+        ]
+    )
+    if is_polish:
+        lines.append(f"原文：{inputs.get('content', '')}")
+    else:
+        lines.append(f"内容/资料：{inputs.get('materials', '')}")
+    knowledge_label = _knowledge_label_from_inputs(inputs, rag_chunks or [])
+    if knowledge_label:
+        lines.append(f"知识库：{knowledge_label}")
+    return "\n".join(lines)
+
+
+def _knowledge_label_from_inputs(inputs: dict, rag_chunks: list[dict]) -> str:
+    if not inputs.get("use_rag"):
+        return ""
+    names = [
+        str(name).strip()
+        for name in inputs.get("rag_dataset_names", [])
+        if str(name).strip()
+    ]
+    if not names:
+        seen = set()
+        for chunk in rag_chunks:
+            name = str(chunk.get("document_name") or chunk.get("filename") or "").strip()
+            if name and name not in seen:
+                seen.add(name)
+                names.append(name)
+    if names:
+        return "、".join(names[:3]) + (" 等" if len(names) > 3 else "")
+    return "已启用知识库"
 
 
 async def recall_memory_node(state: StudentWritingState) -> dict:
@@ -98,6 +147,7 @@ async def retrieve_knowledge_node(state: StudentWritingState) -> dict:
             rag_chunks = rag_result.get("chunks", [])
             rag_context = knowledge_service.format_chunks(rag_chunks)
             if rag_context:
+                # 把切片编号和标注规则一起交给模型，后续 render 节点会再兜底补齐缺失脚注。
                 citation_guide = (
                     "引用规则：检索结果按 1、2、3 编号。正文中如果使用了某条切片的信息，"
                     "请在对应句子或段落末尾标注 [^编号]，不要在文末单独堆砌引用列表。"
@@ -207,171 +257,8 @@ async def revise_draft_node(state: StudentWritingState) -> dict:
 async def render_node(state: StudentWritingState) -> dict:
     inputs = _inputs(state)
     title = inputs.get("title", "未命名写作任务")
-    draft = _finalize_full_article(state.get("draft", ""))
-    citations = _build_citation_items(state.get("rag_chunks", []))
-    if citations:
-        draft = _attach_inline_citations(draft, citations)
-        draft, citations = _renumber_citations_by_appearance(draft, citations)
-    final = f"# {title}\n\n{draft}"
-    citation_meta = _format_citation_metadata(citations)
-    if citation_meta:
-        final = f"{final}\n\n{citation_meta}"
+    final = render_final_article(title, state.get("draft", ""), state.get("rag_chunks", []))
     return {"final_output": final}
-
-
-def _finalize_full_article(text: str) -> str:
-    clean = (text or "").strip()
-    if not clean:
-        return clean
-    clean = re.sub(r"\n?#{1,6}\s*(?:📝\s*)?(?:定稿)?修改提示[\s\S]*$", "", clean, flags=re.I)
-    clean = re.sub(r"\n?#{1,6}\s*(?:📚\s*)?参考文献[\s\S]*$", "", clean, flags=re.I)
-    clean = re.sub(r"\n?#{1,6}\s*(?:修改说明|给同学的修改提示|待确认素材|素材补充建议)[\s\S]*$", "", clean, flags=re.I)
-    clean = re.sub(r"\n?[-*]*\s*(?:📝\s*)?(?:定稿)?修改提示[:：][\s\S]*$", "", clean, flags=re.I)
-    clean = re.sub(r"\n?[-*]*\s*(?:📚\s*)?参考文献(?:（[^）]*）)?[:：][\s\S]*$", "", clean, flags=re.I)
-    clean = re.sub(r"[\[【（(]\s*(?:请|可|建议|此处|这里|待)\s*(?:填入|补充|替换|加入|搜索)[^\]】）)]*[\]】）)]", "", clean)
-    clean = re.sub(r"\*?\s*此处可补充[^。；;\n]*(?:。)?", "", clean)
-    clean = re.sub(r"\n{3,}", "\n\n", clean)
-    return clean.strip()
-
-
-def _build_citation_items(chunks: list[dict]) -> list[dict]:
-    citations = []
-    seen = set()
-    for chunk in chunks:
-        source = chunk.get("document_name") or chunk.get("filename") or "知识库片段"
-        source = str(source).strip() or "知识库片段"
-        content = " ".join(str(chunk.get("content", "")).split())
-        if not content:
-            continue
-        raw = chunk.get("raw") if isinstance(chunk.get("raw"), dict) else {}
-        chunk_key = raw.get("chunk_id") or chunk.get("chunk_id") or f"{source}:{content[:120]}"
-        if chunk_key in seen:
-            continue
-        seen.add(chunk_key)
-        score = chunk.get("score")
-        citations.append(
-            {
-                "id": len(citations) + 1,
-                "source": source,
-                "content": content[:420] + ("..." if len(content) > 420 else ""),
-                "score": round(float(score), 3) if isinstance(score, (int, float)) else None,
-            }
-        )
-    return citations
-
-
-def _attach_inline_citations(text: str, citations: list[dict]) -> str:
-    if not text or not citations:
-        return text
-    if re.search(r"\[\^\d+\]", text):
-        return text
-
-    lines = text.splitlines()
-    used_counts: dict[int, int] = {int(item["id"]): 0 for item in citations}
-    in_code = False
-    in_notes = False
-
-    for line_index, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            in_code = not in_code
-            continue
-        if in_code or not stripped:
-            continue
-        if re.search(r"(定稿修改提示|修改提示|参考文献|知识库引用)", stripped):
-            in_notes = True
-        if in_notes:
-            continue
-        if _is_citation_target(stripped):
-            citation_id = _best_citation_id(stripped, citations, used_counts)
-            marker = f"[^{citation_id}]"
-            if marker not in line:
-                lines[line_index] = line.rstrip() + marker
-            used_counts[citation_id] = used_counts.get(citation_id, 0) + 1
-
-    return "\n".join(lines)
-
-
-def _renumber_citations_by_appearance(text: str, citations: list[dict]) -> tuple[str, list[dict]]:
-    if not text or not citations:
-        return text, citations
-
-    by_old_id = {int(item["id"]): item for item in citations}
-    ordered_items: list[dict] = []
-    old_to_new: dict[int, int] = {}
-
-    def replace_marker(match: re.Match) -> str:
-        old_id = int(match.group(1))
-        if old_id not in by_old_id:
-            return match.group(0)
-        if old_id not in old_to_new:
-            new_id = len(old_to_new) + 1
-            old_to_new[old_id] = new_id
-            item = dict(by_old_id[old_id])
-            item["id"] = new_id
-            ordered_items.append(item)
-        return f"[^{old_to_new[old_id]}]"
-
-    renumbered_text = re.sub(r"\[\^(\d+)\]", replace_marker, text)
-    return renumbered_text, ordered_items
-
-
-def _best_citation_id(paragraph: str, citations: list[dict], used_counts: dict[int, int]) -> int:
-    paragraph_terms = _citation_terms(paragraph)
-    best_id = int(citations[0]["id"])
-    best_score = -1.0
-    for item in citations:
-        citation_id = int(item["id"])
-        content_terms = _citation_terms(str(item.get("content", "")))
-        overlap = len(paragraph_terms & content_terms)
-        base = overlap / max(len(paragraph_terms), 1)
-        retrieval_score = float(item.get("score") or 0) * 0.03
-        reuse_penalty = used_counts.get(citation_id, 0) * 0.08
-        score = base + retrieval_score - reuse_penalty
-        if score > best_score:
-            best_score = score
-            best_id = citation_id
-    return best_id
-
-
-def _citation_terms(text: str) -> set[str]:
-    clean = (text or "").lower()
-    terms = set(re.findall(r"[a-z][a-z0-9_-]{2,}", clean))
-    for segment in re.findall(r"[\u4e00-\u9fff]+", clean):
-        if len(segment) == 1:
-            terms.add(segment)
-            continue
-        for index in range(len(segment) - 1):
-            terms.add(segment[index : index + 2])
-    return terms
-
-
-def _is_citation_target(line: str) -> bool:
-    if len(line) < 58:
-        return False
-    if line.startswith(("#", ">", "- ", "* ", "|", "【")):
-        return False
-    if re.match(r"^\d+[.、]\s*", line):
-        return False
-    if re.match(r"^[一二三四五六七八九十]+[、.．]\s*", line) and len(line) < 80:
-        return False
-    if re.search(r"\[\^\d+\]", line):
-        return False
-    return True
-
-
-def _format_citation_metadata(citations: list[dict]) -> str:
-    if not citations:
-        return ""
-    lines = []
-    for item in citations:
-        score = item.get("score")
-        score_text = f" · 相关度 {score:.3f}" if isinstance(score, (int, float)) else ""
-        source = str(item.get("source") or "知识库片段").replace("\n", " ").strip()
-        content = str(item.get("content") or "").replace("\n", " ").strip()
-        lines.append(f"[^{item['id']}]: {source}{score_text}")
-        lines.append(f"    {content}")
-    return "\n".join(lines)
 
 
 async def save_memory_node(state: StudentWritingState) -> dict:
@@ -379,9 +266,10 @@ async def save_memory_node(state: StudentWritingState) -> dict:
     service = get_memory_service()
     final_output = state.get("final_output", "") or state.get("draft", "")
     draft_output = state.get("draft", "") or final_output
-    query = _query_from_inputs(inputs)
+    query = _display_query_from_inputs(inputs, state.get("rag_chunks", []))
     saved: list[str] = []
     if inputs.get("use_memory", True):
+        # 先写长期记忆，再保存会话轮次，这样节点记录里能展示真实的记忆写入结果。
         saved = await service.save_learning_memories(
             user_id=inputs.get("user_id", "student-demo"),
             session_id=inputs.get("session_id", "demo-session"),
@@ -408,6 +296,7 @@ async def save_memory_node(state: StudentWritingState) -> dict:
 
 
 def _build_node_records(state: StudentWritingState) -> list[dict]:
+    # 历史会话回放依赖这份节点快照，避免刷新后只剩最终文章，看不出 Agent 的执行过程。
     inputs = _inputs(state)
     details = _node_detail_map(state)
     records = [
@@ -450,6 +339,7 @@ def _build_node_records(state: StudentWritingState) -> list[dict]:
 
 
 def _node_detail_map(state: StudentWritingState) -> dict[str, str]:
+    # 节点详情展示“传给下一步的真实内容”，而不是空泛说明，方便演示时展开检查每一步。
     rag_chunks = state.get("rag_chunks", [])
     return {
         "recall_memory": state.get("memory_context", "") or "暂无可召回记忆，该节点向下游传递空记忆上下文。",
@@ -465,6 +355,7 @@ def _node_detail_map(state: StudentWritingState) -> dict[str, str]:
 
 
 def _knowledge_detail(knowledge_context: str, rag_chunks: list[dict]) -> str:
+    # 知识匹配节点同时展示写作指导和实际命中的文件片段，避免只看到“本地知识库”这类泛化文本。
     parts = [knowledge_context or "该节点未返回知识上下文。"]
     if rag_chunks:
         parts.append("\n【检索片段】")

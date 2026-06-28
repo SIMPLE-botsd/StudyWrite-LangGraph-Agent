@@ -20,7 +20,7 @@ _last_invocation_status: dict[str, str | bool] = {
 
 
 class LocalDeepPenWriter:
-    """Deterministic fallback model so the project can demo without paid API keys."""
+    """本地兜底模型：外部 LLM 不可用时仍能完整演示工作流。"""
 
     async def ainvoke(self, messages):
         system_text = getattr(messages[0], "content", "") if messages else ""
@@ -121,6 +121,7 @@ def get_chat_model(temperature: float = 0.2):
         try:
             from langchain_openai import ChatOpenAI
 
+            # 百炼云使用 OpenAI 兼容接口，因此同一套 ChatOpenAI 封装可以切换不同模型。
             kwargs = {
                 "model": settings.MODEL_NAME,
                 "temperature": temperature,
@@ -155,6 +156,7 @@ async def invoke_text(
     if allow_fallback is None:
         allow_fallback = settings.ALLOW_LOCAL_FALLBACK
     model = get_chat_model(temperature=temperature)
+    # 所有节点都通过统一入口调用模型，方便记录“是否真的调用 LLM”和最后一次错误。
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_prompt),
@@ -174,6 +176,7 @@ async def invoke_text(
         return getattr(response, "content", str(response)).strip()
     except Exception as exc:
         if not allow_fallback:
+            # 关闭兜底时把异常抛给上层，适合调试百炼云 Key、模型权限和网络问题。
             _last_invocation_status.update(
                 {
                     "used_llm": False,

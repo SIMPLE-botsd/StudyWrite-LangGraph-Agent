@@ -14,6 +14,7 @@ class MemoryMixin(BaseModel):
     memory_k: int = Field(5, ge=1, le=10, description="长期记忆召回数量")
     use_rag: bool = Field(False, description="是否启用知识库检索")
     rag_dataset_ids: list[str] = Field(default_factory=list, description="知识库 ID 列表")
+    rag_dataset_names: list[str] = Field(default_factory=list, description="知识库名称列表，用于历史消息展示")
     rag_query: str = Field("", description="可选的知识库检索问题，为空时根据写作任务自动生成")
     rag_top_k: int = Field(6, ge=1, le=20, description="知识库检索片段数量")
     deep_polish: bool = Field(False, description="是否启用质量评估和深度修订")

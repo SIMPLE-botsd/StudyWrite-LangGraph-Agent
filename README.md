@@ -1,6 +1,6 @@
 # DeepPen LangGraph Agent
 
-一个参考 `F:\ComProject\qy-write` 架构重写的学生课程大作业版写作智能体。项目保留了原项目的前后端分离、FastAPI 路由层、LangGraph Builder/Node 分层、工作流注册表、流式事件输出和记忆服务设计，但业务从“公文写作”改成“学生写作训练”。
+一个参考 `qy-write` 架构重写的学生课程大作业版写作智能体。项目保留了原项目的前后端分离、FastAPI 路由层、LangGraph Builder/Node 分层、工作流注册表、流式事件输出和记忆服务设计，但业务从“公文写作”改成“学生写作训练”。
 
 默认模型通过 OpenAI 兼容接口接入，示例模型名为 `qwen3.6-flash-2026-04-16`。只要服务商提供兼容的 `base_url`、`api_key` 和 `model`，即可替换为其他大模型。
 
